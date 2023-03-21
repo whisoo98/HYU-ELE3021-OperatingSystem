@@ -1,5 +1,5 @@
 80100000 .text
-801070e0 .rodata
+80107140 .rodata
 80108000 .data
 8010a520 .bss
 00000000 .debug_line
@@ -16,7 +16,7 @@
 8010a558 panicked
 80100410 consputc.part.0
 801005a0 printint
-80107150 digits.1577
+801071b0 digits.1579
 00000000 exec.c
 00000000 file.c
 00000000 fs.c
@@ -33,10 +33,10 @@
 00000000 ioapic.c
 00000000 kalloc.c
 00000000 kbd.c
-8010a5b4 shift.1418
-80107480 shiftcode
-80107380 togglecode
-80107360 charcode.1419
+8010a5b4 shift.1420
+801074e0 shiftcode
+801073e0 togglecode
+801073c0 charcode.1421
 80108200 normalmap
 80108100 shiftmap
 80108000 ctlmap
@@ -53,14 +53,14 @@
 00000000 pipe.c
 00000000 proc.c
 80103790 allocproc
-8010a000 first.1619
+8010a000 first.1621
 8010a5b8 initproc
-8010772c states.1645
+8010778c states.1647
 00000000 sleeplock.c
 00000000 spinlock.c
 00000000 string.c
 00000000 syscall.c
-801077a0 syscalls
+80107800 syscalls
 00000000 sysfile.c
 80104ab0 create
 80104c50 argfd.constprop.0
@@ -75,6 +75,7 @@
 80106820 mappages
 801068b0 deallocuvm.part.0
 8010a420 kmap
+00000000 prac_syscall.c
 80100290 consoleread
 801066f3 vector242
 8010614a vector119
@@ -347,6 +348,7 @@
 80104560 acquire
 80106633 vector226
 80102050 nameiparent
+801070e0 myfunction
 80105ed4 vector49
 80105ea7 vector44
 8011267c lapic
@@ -378,6 +380,7 @@
 80106153 vector120
 8010a48c _binary_entryother_start
 80102560 kinit1
+80107100 sys_myfunction
 80105edd vector50
 80105da4 vector15
 801062af vector151

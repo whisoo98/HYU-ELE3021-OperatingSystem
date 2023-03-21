@@ -6080,10 +6080,11 @@ SYSCALL(uptime)
     3a1b:	b8 0e 00 00 00       	mov    $0xe,%eax
     3a20:	cd 40                	int    $0x40
     3a22:	c3                   	ret    
-    3a23:	66 90                	xchg   %ax,%ax
-    3a25:	66 90                	xchg   %ax,%ax
-    3a27:	66 90                	xchg   %ax,%ax
-    3a29:	66 90                	xchg   %ax,%ax
+
+00003a23 <myfunction>:
+    3a23:	b8 16 00 00 00       	mov    $0x16,%eax
+    3a28:	cd 40                	int    $0x40
+    3a2a:	c3                   	ret    
     3a2b:	66 90                	xchg   %ax,%ax
     3a2d:	66 90                	xchg   %ax,%ax
     3a2f:	90                   	nop

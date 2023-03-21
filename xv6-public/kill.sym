@@ -14,7 +14,7 @@
 00000000 ulib.c
 00000000 printf.c
 00000380 printint
-000007b4 digits.1085
+000007b4 digits.1087
 00000000 umalloc.c
 00000a64 freep
 00000a68 base
@@ -36,6 +36,7 @@
 000002eb read
 00000323 unlink
 000002cb fork
+00000373 myfunction
 0000035b sbrk
 0000036b uptime
 00000a64 __bss_start
