@@ -20,8 +20,9 @@ tvinit(void)
   int i;
 
   for(i = 0; i < 256; i++)
-    SETGATE(idt[i], 0, SEG_KCODE<<3, vectors[i], 0);
-  SETGATE(idt[T_SYSCALL], 1, SEG_KCODE<<3, vectors[T_SYSCALL], DPL_USER);
+    SETGATE(idt[i], 0, SEG_KCODE<<3, vectors[i], 0); // default : kernel mode
+  SETGATE(idt[T_SYSCALL], 1, SEG_KCODE<<3, vectors[T_SYSCALL], DPL_USER); // only int T_SYSCALL can be called from user level
+  SETGATE(idt[128], 1, SEG_KCODE<<3, vectors[128], DPL_USER); // int 128 can be called from user level
 
   initlock(&tickslock, "time");
 }
@@ -77,7 +78,9 @@ trap(struct trapframe *tf)
             cpuid(), tf->cs, tf->eip);
     lapiceoi();
     break;
-
+  case T_MYCALL:
+    myusercall();
+    break;
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){
