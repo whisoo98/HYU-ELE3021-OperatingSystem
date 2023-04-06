@@ -165,7 +165,7 @@ vga: extension=none
 # FLOPPYA:
 # Point this to pathname of floppy image file or device
 # This should be of a bootable floppy(image/device) if you're
-# booting from 'a' (or 'floppy').
+# booting from 'a' (or 'flopp   y').
 #
 # You can set the initial status of the media to 'ejected' or 'inserted'.
 #   floppya: 2_88=path, status=ejected             (2.88M 3.5" floppy)
