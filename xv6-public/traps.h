@@ -36,4 +36,8 @@
 #define IRQ_ERROR       19
 #define IRQ_SPURIOUS    31
 
-#define T_MYCALL        128
+#define T_MYCALL         128
+
+// INT for schedulerLock / Unlock
+#define T_LOCK           129
+#define T_UNLOCK         130

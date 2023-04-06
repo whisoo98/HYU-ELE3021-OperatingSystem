@@ -1,13 +1,13 @@
 // Per-CPU state
 struct cpu {
   uchar apicid;                // Local APIC ID
-  struct context *scheduler;   // swtch() here to enter scheduler
+  struct context* scheduler;   // swtch() here to enter scheduler
   struct taskstate ts;         // Used by x86 to find stack for interrupt
   struct segdesc gdt[NSEGS];   // x86 global descriptor table
   volatile uint started;       // Has the CPU started?
   int ncli;                    // Depth of pushcli nesting.
   int intena;                  // Were interrupts enabled before pushcli?
-  struct proc *proc;           // The process running on this cpu or null
+  struct proc* proc;           // The process running on this cpu or null
 };
 
 extern struct cpu cpus[NCPU];
@@ -38,18 +38,22 @@ enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 struct proc {
   uint sz;                     // Size of process memory (bytes)
   pde_t* pgdir;                // Page table
-  char *kstack;                // Bottom of kernel stack for this process
+  char* kstack;                // Bottom of kernel stack for this process
   enum procstate state;        // Process state
   int pid;                     // Process ID
-  struct proc *parent;         // Parent process
-  struct trapframe *tf;        // Trap frame for current syscall
-  struct context *context;     // swtch() here to run process
-  void *chan;                  // If non-zero, sleeping on chan
+  struct proc* parent;         // Parent process
+  struct trapframe* tf;        // Trap frame for current syscall
+  struct context* context;     // swtch() here to run process
+  void* chan;                  // If non-zero, sleeping on chan
   int killed;                  // If non-zero, have been killed
-  struct file *ofile[NOFILE];  // Open files
-  struct inode *cwd;           // Current directory
+  struct file* ofile[NOFILE];  // Open files
+  struct inode* cwd;           // Current directory
+  int priority;                // Process Priority
+  int Q_level;                 // Q level which process is in
+  uint consumed_time_quantum;  // Time quantum that process is consumed
   char name[16];               // Process name (debugging)
 };
+
 
 // Process memory is laid out contiguously, low addresses first:
 //   text
