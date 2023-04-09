@@ -433,7 +433,7 @@ scheduler(void)
       p->consumed_tq++;
       if (p->consumed_tq >= lv * 2 + 4) {
         p->consumed_tq = 0;
-        if (found == 2) {
+        if (lv == 2) {
           p->priority = p->priority - 1 >= 0 ? p->priority - 1 : 0;
         }
         lv = lv + 1 < 2 ? lv + 1 : 2;
@@ -753,7 +753,7 @@ void schedulerUnlock(int password) {
   // VALID condition
   // posed to in front of L0.
   acquire(&ptable.lock);
-  p->priority = 0;
+  p->priority = 3;
   p->qlv = 0;
   p->consumed_tq = 0;
 
