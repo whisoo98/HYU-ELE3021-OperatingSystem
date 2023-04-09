@@ -48,9 +48,9 @@ struct proc {
   int killed;                  // If non-zero, have been killed
   struct file* ofile[NOFILE];  // Open files
   struct inode* cwd;           // Current directory
-  int priority;                // Process Priority
-  int Q_level;                 // Q level which process is in
-  uint consumed_time_quantum;  // Time quantum that process is consumed
+  int priority;                // Process Priority -> useless : 4, Locked : -1
+  int qlv;                     // Q level which process is in -> useless : 4, Locked : -1
+  uint consumed_tq;            // Time quantum that process is consumed -> useless : 105, Locked : 0
   char name[16];               // Process name (debugging)
 };
 

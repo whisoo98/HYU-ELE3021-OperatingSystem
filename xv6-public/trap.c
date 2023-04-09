@@ -54,6 +54,10 @@ trap(struct trapframe* tf)
     if (cpuid() == 0) {
       acquire(&tickslock);
       ticks++;
+      if (ticks % 100 == 0) {
+        cprintf("ticks :  %d\n", ticks);
+      }
+
       wakeup(&ticks);
       release(&tickslock);
     }
@@ -84,10 +88,12 @@ trap(struct trapframe* tf)
     myusercall();
     break;
   case T_LOCK:
-    ///
+    syscall();
+
     break;
   case T_UNLOCK:
-    ///
+    syscall();
+
     break;
     //PAGEBREAK: 13
   default:

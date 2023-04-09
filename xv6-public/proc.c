@@ -19,21 +19,25 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
-struct
-{
-  struct spinlock lock;
-  int idx[NPROC];
-  // Does these property need?
-  int front;
-  int back;
-} procQ;
+struct fq {
+  int proc_idx[NPROC]; // Save index of ptable.proc[]
+  int front;      // Front of Q
+  int back;       // Back of Q
+  int size;       // Size of Q
+};
+
+struct fq mlfq[3];
 
 static struct proc* initproc;
 
 int nextpid = 1;
+uint global_ticks;
+int scheduler_dictator = -1; // idx
+int is_dictated = 0;
+
 extern void forkret(void);
 extern void trapret(void);
-
+extern int sys_uptime(void);
 static void wakeup1(void* chan);
 
 // Init ptables
@@ -41,9 +45,6 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
-  initlock(&procQ.lock, "procQ");
-  procQ.front = 0;
-  procQ.back = 0;
 }
 
 // Must be called with interrupts disabled
@@ -176,15 +177,15 @@ userinit(void)
   // because the assignment might not be atomic.
   acquire(&ptable.lock);
 
+  // Set process default property
   p->state = RUNNABLE;
   p->priority = 3;
-  p->Q_level = 0;
-  p->consumed_time_quantum = 0;
-
-  // Does it need to acquire procQ.lock?
-  acquire(&procQ.lock);
-  procQ.idx[procQ.back++] = p - ptable.proc;
-  release(&procQ.lock);
+  p->qlv = 0;
+  p->consumed_tq = 0;
+  int uproc_idx = p - (ptable.proc);
+  // EnQ process to mlfq[0]
+  enQ(0, uproc_idx);
+  
   release(&ptable.lock);
 }
 
@@ -252,15 +253,16 @@ fork(void)
 
   acquire(&ptable.lock);
 
+  // Set process default property
   np->state = RUNNABLE;
   np->priority = 3;
-  np->Q_level = 0;
-  np->consumed_time_quantum = 0;
+  np->qlv = 0;
+  np->consumed_tq = 0;
+  int fproc_idx = np - (ptable.proc);
 
-  acquire(&procQ.lock);
-  procQ.idx[procQ.back++] = np - ptable.proc;
-  release(&procQ.lock);
-
+  // EnQ process to mlfq[0]
+  enQ(0, fproc_idx);
+  
   release(&ptable.lock);
 
   return pid;
@@ -308,11 +310,11 @@ exit(void)
   }
 
   // Jump into the scheduler, never to return.
-  // Set priority, Q_level, consumed_time_quantum to useless value.
+  // Set priority, qlv, consumed_tq to useless value.
   curproc->state = ZOMBIE;
-  curproc->priority = -1;
-  curproc->Q_level = -1;
-  curproc->consumed_time_quantum = 105;
+  curproc->priority = USELESS;
+  curproc->qlv = USELESS;
+  curproc->consumed_tq = USELESS;
 
   sched();
   panic("zombie exit");
@@ -349,30 +351,9 @@ wait(void)
         p->killed = 0;
         p->state = UNUSED;
         // set useless value to find bug
-        p->priority = -1;
-        p->Q_level = -1;
-        p->consumed_time_quantum = 105;
-
-        // Delete from procQ
-        acquire(&procQ.lock);
-        for (int i = 0; i < NPROC;i++) {
-          int ptable_idx = procQ.idx[i];
-          if (ptable.proc[ptable_idx].pid == pid) {
-            procQ.idx[i] = -1;           // can't be idx == -1
-            if (i == procQ.front) {
-              procQ.front++;
-              procQ.front %= NPROC;
-            }
-            else if (i == procQ.back) {
-              procQ.back--;
-              procQ.back += NPROC;
-              procQ.back %= NPROC;
-            }
-            // If proc is between front and back
-            // It will be handdled after
-          }
-        }
-        release(&procQ.lock);
+        p->priority = USELESS;
+        p->qlv = USELESS;
+        p->consumed_tq = USELESS;
         release(&ptable.lock);
         return pid;
       }
@@ -403,121 +384,82 @@ scheduler(void)
   struct proc* p;
   struct cpu* c = mycpu();
   c->proc = 0;
-
   for (;;) {
     // Enable interrupts on this processor.
     sti();
 
-    // Loop over process table looking for process to run.
     acquire(&ptable.lock);
 
-    // Sched Infos
-    int sched_priority = 3;
-    int sched_Q_level = 0; // does it need?
-    int procQ_idx; // does it need? => absolutly need
+    int found = 0;
+    int lv = 0;
+    int proc_idx = -1;
 
-    // Find Process Infos that are highest priority with respect to 1.Q_level & 2.priority
-    // Whenever scheduler is called, Find Process Infos
-    // Q_level : from 0 to 2
-    // priority : from 0 to 3 (with Q_level == 2)
-    // TODO : consumed_time_quantum should be considered.
-    for (int lv = 0; lv < 3;lv++) {
-      int found = 0; // variable to check find process to be scheduled
-      for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-        if (p->state != RUNNABLE || p->Q_level != lv ||
-          p->consumed_time_quantum >= lv * 2 + 4)
-          continue; // p is not schedulable process
-        found = 1;
-        sched_Q_level = lv;
-        if (lv == 2) {
-          for (struct proc* q = ptable.proc; q < &ptable.proc[NPROC]; q++) {
-            if (q->state != RUNNABLE || q->Q_level != 2 ||
-              p->consumed_time_quantum >= 8)
-              continue;
-            sched_priority = sched_priority <= q->priority ? sched_priority : q->priority;
-          }
+    // Scheduler is dictated by process that called schedulerLock().
+    if (is_dictated) {
+      // Choose dictator to schedule.
+      proc_idx = scheduler_dictator;
+    }
+    else {
+      // Loop over mlfq looking for process to run with respect to lv from 0 to 2.
+      for (lv = 0;lv < 3;lv++) {
+        proc_idx = pickProc(lv);
+        if (proc_idx != -1) {
+          found = 1;
+          break;
         }
       }
 
-      // It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      // Sched Infos : sched_priority & sched_Q_level
-      // Using Sched Infos, find process in procQ.
-      // Then, switch to chosen process.  
-      if (found) {
-        for (int i = 0;i < NPROC;i++) {
-          int complete_consume = 0;
-          int global_100 = 0;
-          procQ_idx = (i + procQ.front) % NPROC;
-          if (procQ.idx[procQ_idx] == -1) // empty spot
-            continue;
-          struct proc* sched_proc = &(ptable.proc[procQ.idx[procQ_idx]]);
-          if (sched_proc->state != RUNNABLE ||
-            sched_proc->priority != sched_priority || sched_proc->Q_level != sched_Q_level ||
-            sched_proc->consumed_time_quantum >= sched_Q_level * 2 + 4)
-            continue;
-
-          // This process should be scheduled 
-          // until global tick is 100 or consumed time quantum >= level * 2 + 4
-          while (1) {
-            // This process consumes every time quantum that is assigned to him.
-            if (sched_proc->consumed_time_quantum >= sched_Q_level * 2 + 4) {
-              complete_consume = 1;
-              break;
-            }
-
-            // Is it out? or in?
-            c->proc = p;
-            switchuvm(p);
-            p->state = RUNNING;
-
-            swtch(&(c->scheduler), p->context);
-            switchkvm();
-
-            sched_proc->consumed_time_quantum++;
-            // Global tick is 100
-            // It will execute priority boosting
-            if (ticks >= 100) {
-              global_100 = 1;
-              break;
-            }
-          }
-
-          // Process is done running for now.
-          // It should have changed its p->state before coming back.
-          // also lv & shced_priority
-          // lv for re-searching from L0
-          // shced_priority for comparing with p->priority
-
-          c->proc = 0;
-          lv = -1; // for-loop starts to zero
-          sched_priority = 3; // reset sched_priority 
-
-
-          // This process consumes every time quantum that is assigned to him.
-          // Another process will be scheduled.
-          // Process's Q_level += 1 or priority -= 1 
-          // and consumed time quantum set to 0.
-          if (complete_consume) {
-            sched_proc->consumed_time_quantum = 0;
-            sched_proc->Q_level = sched_Q_level + 1 < 2 ? sched_Q_level + 1 : 2;
-            sched_proc->priority = sched_Q_level == 2 ? sched_priority - 1 : sched_proc->priority;
-          }
-
-          // Global ticks is 100
-          // It will execute priority boosting.
-          if (global_100) {
-            // TODO : Logic of priority boosting.
-          }
-        }
+      // There is no RUNNABLE process.
+      if (!found) {
+        release(&ptable.lock);
+        continue;
       }
     }
-    // There is no RUNNABLE process.
-    release(&ptable.lock);
-  }
+    p = &ptable.proc[proc_idx];
 
+    // Switch to chosen process.  It is the process's job
+    // to release ptable.lock and then reacquire it
+    // before jumping back to us.
+    c->proc = p;
+    switchuvm(p);
+    p->state = RUNNING;
+    uint save_ticks = sys_uptime();
+
+    swtch(&(c->scheduler), p->context);
+    switchkvm();
+    if (!is_dictated) {
+      
+      // Adjust Qlv + 1 or priroriy - 1.
+      p->consumed_tq++;
+      if (p->consumed_tq >= lv * 2 + 4) {
+        p->consumed_tq = 0;
+        if (found == 2) {
+          p->priority = p->priority - 1 >= 0 ? p->priority - 1 : 0;
+        }
+        lv = lv + 1 < 2 ? lv + 1 : 2;
+        p->qlv = lv;
+      }
+      if (p->state != ZOMBIE) {
+        enQ(lv, proc_idx);
+      }
+    }
+    
+    // global_ticks up
+    global_ticks += sys_uptime() - save_ticks;
+    // Do prirority Boosting
+    if (global_ticks >= 100) {
+      global_ticks = 0;
+      priorityBoost();
+    }
+
+    // Process is done running for now.
+    // It should have changed its p->state before coming back.
+    c->proc = 0;
+    release(&ptable.lock);
+
+  }
 }
+
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
@@ -697,113 +639,254 @@ procdump(void)
   }
 }
 
+// Get Level of which process is running on mlfq.
 int getLevel(void) {
   struct proc* p = myproc();
-  int q_level = p->q_level;
-  acquire(&ptable_list.lock);
-
-  if (q_level == -1 || q_level == 3) {
-    return -1; // Invalid Q level
-  }
-  release(&ptable_list.lock);
-  return q_level;
+  return p->qlv;
 }
 
-// Set arbitrary Priority to pid Process which is valid
-// If not, then It will do nothing
+// Set arbitrary Priority to pid Process which is valid.
+// If it is not vaild, then it will call panic.
 void setPriority(int pid, int priority) {
-  if (priority < 0 || priority >4) return; // This is invalid priority
-  struct proc* p;
-  acquire(&ptable_list.lock);
-  for (int i = 0; i < NUMQ; i++) {
-    for (p = ptable_list.ptable[i].proc; p < &ptable_list.ptable[i].proc[NPROC]; p++) {
-      if (p->pid != pid)
-        continue;
-      p->priority = priority;
-    }
+  // This is invalid priority.
+  if (priority < 0 || priority >4) {
+    panic("Priority should be in range from 0 to 3\n");
+    exit();
   }
-  release((&ptable_list.lock));
+  int found = 0;
+  int proc_idx = -1;
+  for (int lv = 0;lv < 3;lv++) {
+    int sz = mlfq[lv].size;
+    for (int i = 0;i < sz;i++) {
+      proc_idx = deQ(lv);
+      enQ(lv, proc_idx);
+      if (ptable.proc[proc_idx].pid != pid)
+        continue;
+      found = 1;
+      break;
+    }
+    if (found)
+      break;
+  }
+  if (!found) {
+    panic("Not Running Process pid on Memory\n");
+  }
+  acquire(&ptable.lock);
+  ptable.proc[proc_idx].priority = priority;
+  release(&ptable.lock);
 }
 
+// SYSCALL to execute process with the most highest priority of others.
 
+// It is called with interrupt 129.
+// The process be excuted before MLFQ scheduler.
+
+// Argument is password, student ID, to pass function.
+// If it is NOT VALID, print (pid, time quantum, current queue level).
+// And exit the process that calls schedulerLock().
+// And MLFQ will do normally.
+// If it is VALID, schedulerLock() will perform normally.
+
+// TODO : What if this called again while Locked?
+
+// When it starts, global ticks set to 0 w/o Priority Boosting
+// If following conditions are satisfied, stop the execute process,
+// go back to MLFQ scheduler process.
+
+// Condition 1. call schedulerUnlock() (no matter what its validity is)
+// In Condition 1, after sequances are up to schedulerUnlock()
+
+// Condition 2. Global ticks become 100
+// In Condition 2, executing process be posed to in front of L0.
+// And arise Priority Boosting
 void schedulerLock(int password) {
   struct proc* p = myproc();
-  if (password != PASSWORD) { // Invalid PASSWORD
-    kill(p->pid);
-    cprintf("pid = %d, time quantum = %u, current queue level = %d",
-      p->pid, p->consumed_time_quantum, p->q_level);
-    return;
-  }
 
-  acquire(&ptable_list.lock);
-  int cur_q_level = p->q_level;
-  p->q_level = 3; // The highest priority of all
-  int i = 0;
-  for (struct proc* tmp = ptable_list.ptable[cur_q_level].proc; p < &ptable_list.ptable[cur_q_level].proc[NPROC]; p++, i++) {
-    if (tmp->pid != p->pid)
-      continue;
-    ptable_list.ptable[3].proc[ptable_list.ptable[3].num_proc++] = *tmp; //  이게 들어간다고?
-    makeProcClean(tmp);
-    ptable_list.ptable[cur_q_level].num_proc--;
+
+  // NOT VALID condition
+  if (password != PASSWORD || is_dictated) {
+    cprintf("pid = %d, time quantum = %u, current queue level = %d\n",
+      p->pid, p->consumed_tq, p->qlv);
+    exit();
   }
-  release((&ptable_list.lock));
+  // Lock again also NOT VAILD?
+
+
+  // VAILD condition
+  acquire(&tickslock);
+  global_ticks = 0; // global ticks set to 0.
+  scheduler_dictator = p - ptable.proc; // variable to schedule one process .
+  is_dictated = 1; // variable to represent scheduler dictated.
+  release(&tickslock);
 }
 
+// SYSCALL to stop the sequence of execute process prior than MLFQ scheduler.
+
+// It is called with interrupt 130.
+// The process be excuted onto MLFQ scheduler.
+
+// Argument is password, student ID, to pass function.
+// If it is NOT VALID, print (pid, time quantum, current queue level).
+// And exit the process that calls schedulerunLock().
+// And MLFQ will do normally.
+// If it is VALID, schedulerUnlock() will perform normally.
+
+// What the schdulerUnlock does is
+// 1. Executing process be posed to in front of L0.
+// 2. The Process' priority goes to 3 and time quantum 0.
+
+// Unlike schedulerLock does, 
+// schedulerUnlock() can be called from the process 
+// who has never called schedulerLock().
+// In this case, it is considered as NOT VALID.
+// Therefore, print (pid, time quantum, current queue level)
+// and go back to MLFQ scheduler process.
 void schedulerUnlock(int password) {
   struct proc* p = myproc();
-  if (password != PASSWORD) { // Invalid PASSWORD
-    kill(p->pid);
+  // NOT VALID condition
+  if (password != PASSWORD || !is_dictated || scheduler_dictator != p - ptable.proc) {
     cprintf("pid = %d, time quantum = %u, current queue level = %d",
-      p->pid, p->consumed_time_quantum, p->q_level);
-    return;
+      p->pid, p->consumed_tq, p->qlv);
+    exit();
   }
 
-  acquire(&ptable_list.lock);
-  int cur_q_level = 3;
-  int i = 0;
-  for (struct proc* tmp = ptable_list.ptable[cur_q_level].proc; p < &ptable_list.ptable[cur_q_level].proc[NPROC]; p++, i++) {
-    if (tmp->pid != p->pid)
-      continue;
-    p->priority = 3;
-    p->q_level = 0;
-    p->consumed_time_quantum = 0;
-    ptable_list.ptable[3].num_proc--;
+  // VALID condition
+  // posed to in front of L0.
+  acquire(&ptable.lock);
+  p->priority = 0;
+  p->qlv = 0;
+  p->consumed_tq = 0;
 
-    for (int j = 0; j < NPROC - 1; j++) {
-      struct proc* mv = &ptable_list.ptable[0].proc[j];
-      tmp = &ptable_list.ptable[0].proc[j + 1];
-
-
-    }
-    ptable_list.ptable[0].num_proc++;
-    release((&ptable_list.lock));
-    return;
+  int lv = 0;
+  int sz = mlfq[lv].size;
+  enQ(lv, p - ptable.proc);
+  for (int i = 0;i < sz;i++) {
+    enQ(lv, deQ(lv));
   }
 
-  // Invalid call schedulerUnlock()
-  kill(p->pid);
-  cprintf("pid = %d, time quantum = %u, current queue level = %d",
-    p->pid, p->consumed_time_quantum, p->q_level);
-  return;
+  scheduler_dictator = -1; // variable to schedule one process .
+  is_dictated = 0; // variable to represent scheduler dictated.
+  release(&ptable.lock);
 }
 
-void makeProcClean(struct proc* p) {
+// Do priority Boosting
+// All processes are pushed to L0.
+// All processes's priority reset to 3.
+// All processes's time quantum reset to 0.
+// scheduler_dictator set to 0, 
+// because priorityBoost() can be called when scheduler locked.
+// When do boosting, it does not need to condiser 
+// that to sort processes in descending the priority order in L2.
+// Before call priorityBoost(), ptable should be locked.
+void priorityBoost(void) {
+  // If scheduler has been dictated, dictator should be enQed in front of mlfq[0].
+  if (is_dictated) {
+    int sz = mlfq[0].size;
+    enQ(0, scheduler_dictator);
+    for (int i = 0;i < sz;i++) {
+      enQ(0, deQ(0));
+    }
+    is_dictated = 0;
+    scheduler_dictator = -1;
+  }
+  //priorityBoost
+  for (int lv = 0;lv <= 2;lv++) {
+    int sz = mlfq[lv].size;
+    for (int i = 0;i < sz;i++) {
+      int boost_idx = deQ(lv);
+      ptable.proc[boost_idx].qlv = 0;
+      ptable.proc[boost_idx].priority = 3;
+      ptable.proc[boost_idx].consumed_tq = 0;
+      enQ(0, boost_idx);
+    }
+  }
+}
 
-  p->sz = 0;
-  p->pgdir = 0;
-  p->kstack = 0;
-  p->state = UNUSED;
-  p->pid = 0;
-  p->parent = 0;
-  p->tf = 0;
-  p->context = 0;
-  p->chan = 0;
-  p->killed = 0;
-  for (int i = 0;i < NOFILE;i++)
-    p->ofile[i] = 0;
-  p->cwd = 0;
-  p->priority = -1;
-  p->q_level = -1;
-  p->consumed_time_quantum = 0;
+// It is impossible that enQ() blocked because of full Q.
+// int -> void?
+int enQ(int lv, int idx) {
+  mlfq[lv].proc_idx[mlfq[lv].back] = idx;
+  mlfq[lv].back++;
+  mlfq[lv].back %= NPROC;
+  mlfq[lv].size++;
+  return idx;
+}
 
+// It is impossible to execute deQ() when the Q[lv] is empty.
+// If Q is empty, return -1.
+// If Q is NOT empty, return its value & pop.
+int deQ(int lv) {
+  if (isEmpty(lv))
+    return -1;
+  int ret = mlfq[lv].proc_idx[mlfq[lv].front];
+  mlfq[lv].front++;
+  mlfq[lv].front %= NPROC;
+  mlfq[lv].size--;
+  return ret;
+}
+
+// Check Q is empty or not.
+int isEmpty(int lv) {
+  return mlfq[lv].size == 0;
+}
+
+// Pick process from mlfq[lv]
+// Followings are sequance that how to choose process to run.
+// Case I. lv is 0 or 1.
+// 1. DeQ from mlfq[lv] and check that is it RUNNABLE.
+// 2. If it is, DONE.
+// 3. Else, enQ it and go back to sequence 1.
+
+// Case II. lv is 2.
+// 0. rounding mlfq[lv], find RUNNABLE process's property that (highest priority, fastest idx).
+// 1. DeQ from mlfq[lv] and check that is it RUNNABLE.
+// 2. If it is, go to sequence 4.
+// 3. Else, enQ it and go back to sequence 1.
+// 4. Check that it has right property that I found in sequence 0.
+// 5. If it is, DONE.
+// 6. Else, enQ it and go back to sequence 1.
+
+// If success, return process index which represent ptable.proc[].
+// Else, return -1;
+int pickProc(int lv) {
+  if (isEmpty(lv)) return -1;
+
+  int sz = mlfq[lv].size;
+
+  if (lv == 2) {
+    int proc_priority = USELESS;
+    int mlfq_idx = 0;
+    // Look through mlfq[2] to find process who has highest priority.
+    for (int i = 0;i < sz;i++) {
+      int proc_idx = deQ(lv);
+      enQ(lv, proc_idx);
+      if (ptable.proc[proc_idx].state != RUNNABLE) {
+        continue;
+      }
+      if (proc_priority > ptable.proc[proc_idx].priority) {
+        proc_priority = ptable.proc[proc_idx].priority;
+        mlfq_idx = i; // This will be picked.
+      }
+    }
+    if (proc_priority == USELESS)
+      return -1;
+    int proc_idx = deQ(lv);
+    for (int i = 0;i < mlfq_idx;i++) {
+      enQ(lv, proc_idx);
+      proc_idx = deQ(lv);
+    }
+    return proc_idx;
+  }
+
+  else {
+    for (int i = 0;i < sz;i++) {
+      int proc_idx = deQ(lv);
+      if (ptable.proc[proc_idx].state != RUNNABLE) {
+        enQ(lv, proc_idx);
+        continue;
+      }
+      return proc_idx;
+    }
+  }
+  return -1;
 }

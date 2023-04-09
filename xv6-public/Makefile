@@ -29,6 +29,7 @@ OBJS = \
 	vm.o\
 	prac_syscall.o\
 	prac2_myusercall.o\
+	mysyscall.o\
 
 # Cross-compiling (e.g., on Mac OS X)
 # TOOLPREFIX = i386-jos-elf

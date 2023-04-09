@@ -21,8 +21,9 @@
 #define SYS_mkdir        20
 #define SYS_close        21
 #define SYS_myfunction   22
+/*Newly added SYSCALL*/
 #define SYS_yield        23
 #define SYS_getlevel     24
 #define SYS_setpriority  25
 #define SYS_lock         26
-#define SYS_unlock       27
+#define SYS_unlock       27 

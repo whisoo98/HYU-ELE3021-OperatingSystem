@@ -120,6 +120,21 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+/***************Added properties in proc.c***************/
+int             getLevel(void);
+void            setPriority(int pid, int priority);
+void            schedulerLock(int password);
+void            schedulerUnlock(int password);
+void            priorityBoost(void);
+int             enQ(int lv, int idx);
+int             deQ(int lv);
+int             isEmpty(int lv);
+int             pickProc(int lv);
+extern int      scheduler_locked;
+uint            global_ticks;
+#define USELESS 200
+
+
 
 // swtch.S
 void            swtch(struct context**, struct context*);
