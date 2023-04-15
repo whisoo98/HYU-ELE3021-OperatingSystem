@@ -10,6 +10,7 @@
 int
 sys_fork(void)
 {
+
   return fork();
 }
 
@@ -88,4 +89,37 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+int sys_yield(void) {
+  yield();
+  return 1;
+}
+int sys_getLevel(void) {
+  return getLevel();
+}
+int sys_setPriority(void) {
+  int pid;
+  int priority;
+
+  if (argint(0, &pid) < 0 || argint(1, &priority) < 0)
+    return -1;
+  setPriority(pid, priority);
+  return 1;
+}
+int sys_schedulerLock(void) {
+  int password;
+
+  if (argint(0, &password) < 0)
+    return -1;
+  schedulerLock(password);
+  return 1;
+}
+int sys_schedulerUnlock(void) {
+  int password;
+
+  if (argint(0, &password) < 0)
+    return -1;
+  schedulerUnlock(password);
+  return 1;
 }

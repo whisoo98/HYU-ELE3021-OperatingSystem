@@ -131,7 +131,7 @@ int             deQ(int lv);
 int             isEmpty(int lv);
 int             pickProc(int lv);
 extern int      scheduler_locked;
-uint            global_ticks;
+extern uint     global_ticks;
 #define USELESS 200
 
 

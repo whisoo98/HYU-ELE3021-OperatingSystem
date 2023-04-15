@@ -7,6 +7,9 @@
 #include "proc.h"
 #include "spinlock.h"
 
+/*
+TODO
+*/
 // ptable array for 3lv - MLFQ
 // 0, 1 and 2 are corresponeded to L0, L1 and L2
 // 3 is special ptable to handle process which calls schedulerLock()
@@ -256,7 +259,6 @@ fork(void)
   int uproc_idx = np - (ptable.proc);
   // EnQ process to mlfq[0]
   enQ(0, uproc_idx);
-
   release(&ptable.lock);
 
   return pid;
@@ -304,6 +306,10 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
+  if (scheduler_dictator == curproc - ptable.proc) {
+    is_dictated = 0;
+    scheduler_dictator = -1;
+  }
   sched();
   panic("zombie exit");
 }
@@ -406,34 +412,32 @@ scheduler(void)
     c->proc = p;
     switchuvm(p);
     p->state = RUNNING;
-    uint save_ticks = sys_uptime();
-
     swtch(&(c->scheduler), p->context);
     switchkvm();
+    // Feedback
+    p->consumed_tq++;
     if (!is_dictated) {
 
       // Adjust Qlv + 1 or priroriy - 1.
-      p->consumed_tq++;
       if (p->consumed_tq >= lv * 2 + 4) {
-        p->consumed_tq = 0;
         if (lv == 2) {
-          p->priority = p->priority - 1 >= 0 ? p->priority - 1 : 0;
+          p->priority =
+            p->priority - 1 >= 0 ? p->priority - 1 : 0;
         }
         lv = lv + 1 < 2 ? lv + 1 : 2;
         p->qlv = lv;
+        p->consumed_tq = 0;
       }
       if (p->state != ZOMBIE) {
         enQ(lv, proc_idx);
       }
     }
 
-    // global_ticks up
-    global_ticks += sys_uptime() - save_ticks;
     // // Do prirority Boosting
-    // if (global_ticks >= 100) {
-    //   global_ticks = 0;
-    //   priorityBoost();
-    // }
+    if (global_ticks >= 100) {
+      global_ticks = 0;
+      priorityBoost();
+    }
 
     // Process is done running for now.
     // It should have changed its p->state before coming back.
@@ -527,7 +531,6 @@ sleep(void* chan, struct spinlock* lk)
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
-
   sched();
 
   // Tidy up.
@@ -605,6 +608,8 @@ procdump(void)
   char* state;
   uint pc[10];
 
+  cprintf("gtick: %d\n", global_ticks);
+
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
     if (p->state == UNUSED)
       continue;
@@ -624,14 +629,17 @@ procdump(void)
 
 
 // Get Level of which process is running on mlfq.
+// If the process is dictator, it will return -1.
+// And this is intended result.
 int getLevel(void) {
   struct proc* p = myproc();
   return p->qlv;
 }
 
 // Set arbitrary Priority to pid Process which is valid.
-// If it is not vaild, then it will call panic.
+// If it is not vaild, then it do nothing.
 void setPriority(int pid, int priority) {
+  acquire(&ptable.lock);
   int found = 0;
   int proc_idx = -1;
   for (int lv = 0;lv < 3;lv++) {
@@ -649,18 +657,21 @@ void setPriority(int pid, int priority) {
   }
   // NOT VALID condition
   if (priority < 0 || priority >4) {
-    panic("Priority should be in range from 0 to 3\n");
-    exit();
+    cprintf("Priority should be in range from 0 to 3\n");
+    release(&ptable.lock);
+    //exit();
   }
   // NOT VALID condition
-  if (!found) {
-    panic("Not Running Process pid on Memory\n");
+  else if (!found) {
+    cprintf("Not Running Process pid on Memory\n");
+    release(&ptable.lock);
+    //exit();
   }
-
-  // VAILD condition
-  acquire(&ptable.lock);
-  ptable.proc[proc_idx].priority = priority;
-  release(&ptable.lock);
+  else {
+    // VAILD condition
+    ptable.proc[proc_idx].priority = priority;
+    release(&ptable.lock);
+  }
 }
 
 // SYSCALL to execute process with the most highest priority of others.
@@ -688,20 +699,32 @@ void setPriority(int pid, int priority) {
 // And arise Priority Boosting
 void schedulerLock(int password) {
   struct proc* p = myproc();
+  acquire(&tickslock);
 
   // NOT VALID condition
-  if (password != PASSWORD || is_dictated) {
-    cprintf("pid = %d, time quantum = %u, current queue level = %d\n",
+  if (is_dictated) { // Block trying to dicate again.
+    cprintf("pid = %d, time quantum = %d, current queue level = %d\n",
       p->pid, p->consumed_tq, p->qlv);
+    release(&tickslock);
+    scheduler_dictator = -1; // dictator out.
+    is_dictated = 0;
     exit();
   }
-
-  // VAILD condition
-  acquire(&tickslock);
-  global_ticks = 0; // global ticks set to 0.
-  scheduler_dictator = p - ptable.proc; // variable to schedule one process .
-  is_dictated = 1; // variable to represent scheduler dictated.
-  release(&tickslock);
+  else if (password != PASSWORD) {
+    cprintf("pid = %d, time quantum = %d, current queue level = %d\n",
+      p->pid, p->consumed_tq, p->qlv);
+    release(&tickslock);
+    exit();
+  }
+  else {
+    // VAILD condition
+    global_ticks = 0; // global ticks set to 0.
+    scheduler_dictator = p - ptable.proc; // variable to schedule one process .
+    is_dictated = 1; // variable to represent scheduler dictated.
+    p->consumed_tq = 0;
+    p->qlv = -1;     // Dictating scheduler can be condsidered that process is in the most highest MLFQ which level is -1.
+    release(&tickslock);
+  }
 }
 
 // SYSCALL to stop the sequence of execute process prior than MLFQ scheduler.
@@ -727,30 +750,32 @@ void schedulerLock(int password) {
 // and go back to MLFQ scheduler process.
 void schedulerUnlock(int password) {
   struct proc* p = myproc();
+  acquire(&ptable.lock);
   // NOT VALID condition
   if (password != PASSWORD || !is_dictated || scheduler_dictator != p - ptable.proc) {
-    cprintf("pid = %d, time quantum = %u, current queue level = %d",
+    cprintf("pid = %d, time quantum = %d, current queue level = %d\n",
       p->pid, p->consumed_tq, p->qlv);
+    release(&ptable.lock);
     exit();
   }
+  else {
+    // VALID condition
+    // posed to in front of L0.
+    p->priority = 3;
+    p->qlv = 0;
+    p->consumed_tq = 0;
 
-  // VALID condition
-  // posed to in front of L0.
-  acquire(&ptable.lock);
-  p->priority = 3;
-  p->qlv = 0;
-  p->consumed_tq = 0;
+    int lv = 0;
+    int sz = mlfq[lv].size;
+    enQ(lv, p - ptable.proc);
+    for (int i = 0;i < sz;i++) {
+      enQ(lv, deQ(lv));
+    }
 
-  int lv = 0;
-  int sz = mlfq[lv].size;
-  enQ(lv, p - ptable.proc);
-  for (int i = 0;i < sz;i++) {
-    enQ(lv, deQ(lv));
+    scheduler_dictator = -1; // variable to schedule one process .
+    is_dictated = 0; // variable to represent scheduler dictated.
+    release(&ptable.lock);
   }
-
-  scheduler_dictator = -1; // variable to schedule one process .
-  is_dictated = 0; // variable to represent scheduler dictated.
-  release(&ptable.lock);
 }
 
 // Do priority Boosting
@@ -762,29 +787,29 @@ void schedulerUnlock(int password) {
 // When do boosting, it does not need to condiser 
 // that to sort processes in descending the priority order in L2.
 // Before call priorityBoost(), ptable should be locked.
-// void priorityBoost(void) {
-//   // If scheduler has been dictated, dictator should be enQed in front of mlfq[0].
-//   if (is_dictated) {
-//     int sz = mlfq[0].size;
-//     enQ(0, scheduler_dictator);
-//     for (int i = 0;i < sz;i++) {
-//       enQ(0, deQ(0));
-//     }
-//     is_dictated = 0;
-//     scheduler_dictator = -1;
-//   }
-//   //priorityBoost
-//   for (int lv = 0;lv <= 2;lv++) {
-//     int sz = mlfq[lv].size;
-//     for (int i = 0;i < sz;i++) {
-//       int boost_idx = deQ(lv);
-//       ptable.proc[boost_idx].qlv = 0;
-//       ptable.proc[boost_idx].priority = 3;
-//       ptable.proc[boost_idx].consumed_tq = 0;
-//       enQ(0, boost_idx);
-//     }
-//   }
-// }
+void priorityBoost(void) {
+  // If scheduler has been dictated, dictator should be enQed in front of mlfq[0].
+  if (is_dictated) {
+    int sz = mlfq[0].size;
+    enQ(0, scheduler_dictator);
+    for (int i = 0;i < sz;i++) {
+      enQ(0, deQ(0));
+    }
+    is_dictated = 0;
+    scheduler_dictator = -1;
+  }
+  //priorityBoost
+  for (int lv = 0;lv <= 2;lv++) {
+    int sz = mlfq[lv].size;
+    for (int i = 0;i < sz;i++) {
+      int boost_idx = deQ(lv);
+      ptable.proc[boost_idx].qlv = 0;
+      ptable.proc[boost_idx].priority = 3;
+      ptable.proc[boost_idx].consumed_tq = 0;
+      enQ(0, boost_idx);
+    }
+  }
+}
 
 // It is impossible that enQ() blocked because of full Q.
 // int -> void?
@@ -815,22 +840,26 @@ int isEmpty(int lv) {
 }
 
 // Pick process from mlfq[lv]
-// Followings are sequance that how to choose process to run.
+// Followings are sequance 
+// that how to choose process to run.
 // Case I. lv is 0 or 1.
 // 1. DeQ from mlfq[lv] and check that is it RUNNABLE.
 // 2. If it is, DONE.
 // 3. Else, enQ it and go back to sequence 1.
 
 // Case II. lv is 2.
-// 0. rounding mlfq[lv], find RUNNABLE process's property that (highest priority, fastest idx).
+// 0. rounding mlfq[lv], find RUNNABLE process's property 
+// that(highest priority, fastest idx).
 // 1. DeQ from mlfq[lv] and check that is it RUNNABLE.
 // 2. If it is, go to sequence 4.
 // 3. Else, enQ it and go back to sequence 1.
-// 4. Check that it has right property that I found in sequence 0.
+// 4. Check that it has right property 
+// that I found in sequence 0.
 // 5. If it is, DONE.
 // 6. Else, enQ it and go back to sequence 1.
 
-// If success, return process index which represent ptable.proc[].
+// If success, return process index 
+// which represent ptable.proc[].
 // Else, return -1;
 int pickProc(int lv) {
   if (isEmpty(lv)) return -1;
@@ -840,7 +869,8 @@ int pickProc(int lv) {
   if (lv == 2) {
     int proc_priority = USELESS;
     int mlfq_idx = 0;
-    // Look through mlfq[2] to find process who has highest priority.
+    // Look through mlfq[2] to find process 
+    // who has highest priority.
     for (int i = 0;i < sz;i++) {
       int proc_idx = deQ(lv);
       enQ(lv, proc_idx);

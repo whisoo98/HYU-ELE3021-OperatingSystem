@@ -2,7 +2,7 @@
 #include "stat.h"
 #include "user.h"
 
-int main(int argc, char *argv[]){
+int main(int argc, char* argv[]) {
     char* buf = argv[1];
     int ret_val;
     ret_val = myfunction(buf);
