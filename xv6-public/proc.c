@@ -383,14 +383,16 @@ scheduler(void)
     int lv = 0;
     int proc_idx = -1;
 
-    // Scheduler is dictated by process that called schedulerLock().
+    // Is dictated?
     if (is_dictated) {
-      // Choose dictator to schedule.
+      // Pick Dictator
+      // Scheduler is dictated by process that called schedulerLock().
       proc_idx = scheduler_dictator;
     }
     else {
       // Loop over mlfq looking for process to run with respect to lv from 0 to 2.
       for (lv = 0;lv < 3;lv++) {
+        // PickProc
         proc_idx = pickProc(lv);
         if (proc_idx != -1) {
           found = 1;
@@ -406,6 +408,7 @@ scheduler(void)
     }
     p = &ptable.proc[proc_idx];
 
+    // Context Switch
     // Switch to chosen process.  It is the process's job
     // to release ptable.lock and then reacquire it
     // before jumping back to us.
@@ -414,6 +417,7 @@ scheduler(void)
     p->state = RUNNING;
     swtch(&(c->scheduler), p->context);
     switchkvm();
+
     // Feedback
     p->consumed_tq++;
     if (!is_dictated) {
@@ -428,13 +432,15 @@ scheduler(void)
         p->qlv = lv;
         p->consumed_tq = 0;
       }
+      // Is ZOMBIE?
       if (p->state != ZOMBIE) {
         enQ(lv, proc_idx);
       }
     }
 
-    // // Do prirority Boosting
+    // Is tick 100?
     if (global_ticks >= 100) {
+      // Do prirority Boosting
       global_ticks = 0;
       priorityBoost();
     }
@@ -685,9 +691,7 @@ void setPriority(int pid, int priority) {
 // And MLFQ will do normally.
 // If it is VALID, schedulerLock() will perform normally.
 
-// TODO : What if this called again while Locked?
-
-// When it starts, global ticks set to 0 w/o Priority Boosting
+// When it starts, global ticks set to 0 w/o Priority Boosting.
 // If following conditions are satisfied, stop the execute process,
 // go back to MLFQ scheduler process.
 
@@ -699,21 +703,21 @@ void setPriority(int pid, int priority) {
 // And arise Priority Boosting
 void schedulerLock(int password) {
   struct proc* p = myproc();
-  acquire(&tickslock);
+  acquire(&ptable.lock);
 
   // NOT VALID condition
   if (is_dictated) { // Block trying to dicate again.
     cprintf("pid = %d, time quantum = %d, current queue level = %d\n",
       p->pid, p->consumed_tq, p->qlv);
-    release(&tickslock);
     scheduler_dictator = -1; // dictator out.
     is_dictated = 0;
+    release(&ptable.lock);
     exit();
   }
-  else if (password != PASSWORD) {
+  else if (password != PASSWORD) { // It is Wrong Password.
     cprintf("pid = %d, time quantum = %d, current queue level = %d\n",
       p->pid, p->consumed_tq, p->qlv);
-    release(&tickslock);
+    release(&ptable.lock);
     exit();
   }
   else {
@@ -722,8 +726,10 @@ void schedulerLock(int password) {
     scheduler_dictator = p - ptable.proc; // variable to schedule one process .
     is_dictated = 1; // variable to represent scheduler dictated.
     p->consumed_tq = 0;
-    p->qlv = -1;     // Dictating scheduler can be condsidered that process is in the most highest MLFQ which level is -1.
-    release(&tickslock);
+    p->qlv = -1;
+    // Dictating scheduler can be condsidered 
+    //that process is in the most highest MLFQ which level is - 1.
+    release(&ptable.lock);
   }
 }
 
@@ -745,18 +751,29 @@ void schedulerLock(int password) {
 // Unlike schedulerLock does, 
 // schedulerUnlock() can be called from the process 
 // who has never called schedulerLock().
-// In this case, it is considered as NOT VALID.
-// Therefore, print (pid, time quantum, current queue level)
-// and go back to MLFQ scheduler process.
+// However, it is also possible case 
+// that the process who calls schedulerLock()
+// explictly calls schedulerUnlock() 
+// after Priority Boosting is executed. 
+// This is very common case 
+// because user can't exactly predict when glabal_ticks is over 100.
+// Therefore, it is considered as VOID case that do nothing.
+// Otherwise, process will be exited with no intent.
 void schedulerUnlock(int password) {
   struct proc* p = myproc();
   acquire(&ptable.lock);
   // NOT VALID condition
-  if (password != PASSWORD || !is_dictated || scheduler_dictator != p - ptable.proc) {
+  if (password != PASSWORD) {
     cprintf("pid = %d, time quantum = %d, current queue level = %d\n",
       p->pid, p->consumed_tq, p->qlv);
     release(&ptable.lock);
     exit();
+  }
+  // There is no dictator OR He is not dictator.
+  // VOID condition
+  else if (!is_dictated || p - ptable.proc != scheduler_dictator) {
+    // Do NOTHING.
+    release(&ptable.lock);
   }
   else {
     // VALID condition

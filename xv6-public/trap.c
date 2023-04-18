@@ -85,10 +85,10 @@ trap(struct trapframe* tf)
     myusercall();
     break;
   case T_LOCK:
-    syscall();
+    schedulerLock(PASSWORD);
     break;
   case T_UNLOCK:
-    syscall();
+    schedulerUnlock(PASSWORD);
     break;
 
     //PAGEBREAK: 13
