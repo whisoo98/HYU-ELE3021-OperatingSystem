@@ -1,0 +1,8 @@
+test_thread_gh => stack 재사용 필요
+test_thread_gh2 => 아직 안함
+hello_thread
+thread_test => Test Error
+thread_exec => 하나의 쓰레드만 남기고 exec 성공
+thread_exit => 쓰레드에서 exit 
+thread_kill => 쓰레드에서 kill
+thread_test_sw => 성공

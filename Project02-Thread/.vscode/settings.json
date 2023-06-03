@@ -1,0 +1,28 @@
+{
+    "files.associations": {
+        "*.py": "python",
+        "user.h": "c",
+        "fcntl.h": "c",
+        "types.h": "c",
+        "defs.h": "c",
+        "stat.h": "c",
+        "mmu.h": "c",
+        "proc.h": "c",
+        "date.h": "c",
+        "param.h": "c",
+        "x86.h": "c",
+        "memlayout.h": "c",
+        "cstdlib": "c",
+        "spinlock.h": "c",
+        "syscall.h": "c",
+        "elf.h": "c",
+        "sleeplock.h": "c",
+        "fs.h": "c",
+        "functional": "c",
+        "atomic": "c",
+        "*.tcc": "c",
+        "fstream": "c",
+        "sstream": "c",
+        "typeinfo": "c"
+    }
+}

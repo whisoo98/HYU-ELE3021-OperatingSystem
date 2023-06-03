@@ -1,0 +1,23 @@
+    
+    _testThread\ O
+    testThread.c\ O
+	
+	_testThreadExit\ O 
+	testThreadExit.c\ O
+
+	_testThreadGH\ O
+	testThreadGH.c\ O
+
+	_testThreadGH2\ O
+	testThreadGH2.c\ O
+
+	_testThreadExec\ O
+	_testThreadHello\ O
+	testThreadExec.c\ O 
+	testThreadHello.c\ O
+
+	_testThreadKill\ O
+	testThreadKill.c\ O
+	
+	_testThreadSW\ O 
+	testThreadSW.c\ O
